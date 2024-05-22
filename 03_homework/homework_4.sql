@@ -16,7 +16,14 @@ HINT: keep the syntax the same, but edited the correct components with the strin
 The `||` values concatenate the columns into strings. 
 Edit the appropriate columns -- you're making two edits -- and the NULL rows will be fixed. 
 All the other rows will remain the same.) */
-
+SELECT 
+  product_name
+  || ', '
+  || COALESCE(product_size, '')
+  || ' (' 
+  || COALESCE(product_qty_type, '')
+  || ')'
+FROM product;
 
 
 
@@ -30,16 +37,79 @@ each new market date for each customer, or select only the unique market dates p
 (without purchase details) and number those visits. 
 HINT: One of these approaches uses ROW_NUMBER() and one uses DENSE_RANK(). */
 
+-- OPTION ONE
+SELECT 
+	*,
+	ROW_NUMBER() OVER(
+		PARTITION BY customer_id
+		ORDER BY market_date
+	) as visit
+FROM customer_purchases
+ORDER BY visit, market_date
+
+-- OPTION TWO
+SELECT
+	DISTINCT market_date, 
+	customer_id,
+	DENSE_RANK() OVER (
+		PARTITION BY customer_id
+		ORDER BY market_date
+		
+	) as visit
+FROM customer_purchases
+ORDER BY customer_id;
 
 /* 2. Reverse the numbering of the query from a part so each customer’s most recent visit is labeled 1, 
 then write another query that uses this one as a subquery (or temp table) and filters the results to 
 only the customer’s most recent visit. */
 
+-- OPTION 1
+SELECT *
+  FROM (
+    SELECT 
+	  *,
+	  ROW_NUMBER() OVER(
+	    PARTITION BY customer_id
+		ORDER BY market_date DESC
+	  ) as visit
+    FROM customer_purchases
+) x
+where x.visit =	1
+ORDER BY x.customer_id
+
+-- OPTION 2
+DROP TABLE IF EXISTS temp_customer_visits;
+CREATE TEMP TABLE temp_customer_visits AS
+SELECT
+	DISTINCT market_date, 
+	customer_id,
+	DENSE_RANK() OVER (
+		PARTITION BY customer_id
+		ORDER BY market_date DESC	
+	) as visit
+FROM customer_purchases
+ORDER BY customer_id;
+
+SELECT * FROM temp.temp_customer_visits WHERE visit = 1;
 
 /* 3. Using a COUNT() window function, include a value along with each row of the 
 customer_purchases table that indicates how many different times that customer has purchased that product_id. */
 
-
+-- I'm assuming each row here means to include every row.
+-- I'm also assuming that 'how many different times' means the total number of
+-- different times, not a sequence for each time. Otherwise I'd use a rank no?
+SELECT
+	customer_id
+	,vendor_id
+	,product_id
+	,quantity
+	,market_date
+	,transaction_time
+	,COUNT(product_id) OVER (
+		PARTITION BY customer_id
+	)
+FROM customer_purchases
+where customer_id = 1 and product_id = 4
 
 
 -- String manipulations
@@ -53,11 +123,33 @@ Remove any trailing or leading whitespaces. Don't just use a case statement for 
 | Habanero Peppers - Organic | Organic     |
 
 Hint: you might need to use INSTR(product_name,'-') to find the hyphens. INSTR will help split the column. */
-
+-- This is pretty bad. Please tell me there's a better way to do this.
+SELECT
+  product_name
+  ,REPLACE(
+     SUBSTR(
+	   product_name,
+	     NULLIF(
+		   INSTR(product_name,'-')
+		   ,0)
+		 )
+	   ,'- '
+	,'') as description
+ from product;
 
 
 /* 2. Filter the query to show any product_size value that contain a number with REGEXP. */
-
+SELECT
+  product_name
+  ,REPLACE(
+    SUBSTR(
+	  product_name
+	  ,NULLIF(INSTR(product_name,'-'),0))
+	  ,'- '
+	,'') as description
+  ,product_size
+FROM product
+WHERE product_size REGEXP '[0-9]';
 
 
 -- UNION
@@ -70,6 +162,35 @@ HINT: There are a possibly a few ways to do this query, but if you're struggling
 3) Query the second temp table twice, once for the best day, once for the worst day, 
 with a UNION binding them. */
 
+DROP TABLE IF EXISTS market_date_sales;
+DROP TABLE IF EXISTS market_date_sales_ranking;
+CREATE TEMP TABLE market_date_sales AS
+  SELECT 
+    vendor_id
+    ,market_date
+    ,SUM(quantity * cost_to_customer_per_qty) AS sales
+  FROM customer_purchases
+  GROUP BY market_date;
 
+CREATE TEMP TABLE market_date_sales_ranking AS
+  SELECT
+    market_date
+	,sales
+	,RANK() OVER(ORDER BY sales DESC) as sales_rank
+	FROM market_date_sales;
+  
+SELECT
+  market_date
+  ,sales
+  ,MIN(sales_rank) as [least/max sales ranking]
+FROM temp.market_date_sales_ranking
+ 
+UNION
 
+SELECT 
+  market_date
+  ,sales
+  ,MAX(sales_rank)
+FROM temp.market_date_sales_ranking;
 
+	
