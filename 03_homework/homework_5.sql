@@ -7,8 +7,26 @@ HINT: Be sure you select only relevant columns and rows.
 Remember, CROSS JOIN will explode your table rows, so CROSS JOIN should likely be a subquery. 
 Think a bit about the row counts: how many distinct vendors, product names are there (x)?
 How many customers are there (y). 
-Before your final group by you should have the product of those two queries (x*y).  */
 
+Before your final group by you should have the product of those two queries (x*y).  */
+-- I left our original price and customer count because I wasn't sure if they
+-- count as "relevant" here or not.
+
+-- grouping by both product id and vendor id as I think it's possible for different
+-- vendors to have the same product id on different market dates.
+SELECT
+  p.product_name
+  ,v.vendor_name
+ -- ,vi.original_price
+ -- ,c.customers
+  ,((vi.original_price * 5) * c.customers) AS sale_from_five_per_customer
+FROM vendor_inventory vi
+LEFT JOIN vendor AS v
+  ON vi.vendor_id = v.vendor_id
+LEFT JOIN product AS p
+  ON vi.product_id = p.product_id
+CROSS JOIN (SELECT COUNT(customer_id) as customers FROM customer) AS c
+GROUP BY p.product_id, v.vendor_id;
 
 
 -- INSERT
@@ -16,19 +34,63 @@ Before your final group by you should have the product of those two queries (x*y
 This table will contain only products where the `product_qty_type = 'unit'`. 
 It should use all of the columns from the product table, as well as a new column for the `CURRENT_TIMESTAMP`.  
 Name the timestamp column `snapshot_timestamp`. */
-
+DROP TABLE IF EXISTS product_units;
+-- Not using CREATE TABLE AS as that doesn't allow me to create my
+-- own primary key on product id.
+-- If this were another database like postgres we could alter after 
+-- the fact, but SQLite doesn't allow alters post table creation for
+-- keys.
+CREATE TABLE product_units(
+    product_id INTEGER
+	,product_name varchar(45)
+	,product_size varchar(45)
+	,product_category_id int(11)
+	,product_qty_type varchar(45)
+	,snapshot_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+	,PRIMARY KEY(product_id)
+	);
+	
+INSERT INTO product_units
+  (
+    product_id
+	,product_name
+	,product_size
+	,product_category_id
+	,product_qty_type
+  )
+  SELECT
+    product_id
+	,product_name
+	,product_size
+	,product_category_id
+	,product_qty_type
+  FROM product
+  WHERE product_qty_type = 'unit';
 
 
 /*2. Using `INSERT`, add a new row to the product_units table (with an updated timestamp). 
 This can be any product you desire (e.g. add another record for Apple Pie). */
-
+INSERT INTO product_units
+  (
+	product_name
+	,product_size
+	,product_category_id
+	,product_qty_type
+  )
+VALUES(
+  'Elderberry Pie'
+  ,'12"'
+  ,3
+  ,'unit'
+);
 
 
 -- DELETE
 /* 1. Delete the older record for the whatever product you added. 
 
 HINT: If you don't specify a WHERE clause, you are going to have a bad time.*/
-
+DELETE FROM product_units
+  WHERE product_id = 24;
 
 
 -- UPDATE
@@ -48,4 +110,37 @@ Finally, make sure you have a WHERE statement to update the right row,
 	you'll need to use product_units.product_id to refer to the correct row within the product_units table. 
 When you have all of these components, you can run the update statement. */
 
+-- For posterity, here's the ALTER command. I'd like to point out that the lack
+-- of DEFAULT 0 to create a zero value bothers me. Null really was the billion
+-- dollar mistake.
+-- https://www.infoq.com/presentations/Null-References-The-Billion-Dollar-Mistake-Tony-Hoare/
 
+ALTER TABLE product_units
+ADD current_quantity INT;
+
+
+WITH product_units_qty AS (
+  SELECT 
+    p.product_id
+    ,COALESCE(x.quantity, 0) as last_qty
+	,x.market_date
+  FROM product p 
+  LEFT JOIN (
+    SELECT * FROM (
+      SELECT 
+	    vi.*
+	    ,ROW_NUMBER() OVER(
+		  PARTITION BY product_id 
+		  ORDER BY market_date DESC
+	    ) rn FROM vendor_inventory vi
+      ) WHERE rn = 1
+  ) x on p.product_id = x.product_id
+  WHERE p.product_qty_type = 'unit'
+)
+
+UPDATE product_units
+  SET current_quantity = (
+    SELECT last_qty
+	FROM product_units_qty
+	WHERE product_id = product_units.product_id
+  );
